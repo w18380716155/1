@@ -1,0 +1,11 @@
+library(caret)
+setwd("D\\")      
+rt=read.table("A.txt",header=T,sep="\t",check.names=F,row.names=1)
+rt[,"futime"]=rt[,"futime"]/365  
+for(i in 1:1000) inTrain<-createDataPartition(y=rt[,3],p=0.5,list=F)
+		train<-rt[inTrain,]
+		test<-rt[-inTrain,]
+		trainOut=cbind(id=row.names(train),train)
+		testOut=cbind(id=row.names(test),test)
+		write.table(trainOut,file="train.txt",sep="\t",quote=F,row.names=F)
+			   write.table(testOut,file="test.txt",sep="\t",quote=F,row.names=F)

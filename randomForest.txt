@@ -1,0 +1,242 @@
+#V1.0.1
+#Author zhen
+#date 2021-05-26
+
+#V1.0.0:第一版随机森林生存分析
+
+RF_SRC <- function(mydata,tim,sta, feature_con=NULL,feature_cat=NULL, 
+                   trainsplit=FALSE,trainSet=FALSE,label='LABEL',trainLabel=0,validation_ratio=0.2,randomState=1,
+                   cate=NULL, method='all',timepreinc='year',timeroc=FALSE,timequant=NULL,
+                   savePath=NULL,round= 2,dpi=600,picFormat='jpeg',
+                   ntree =100,nsplit =5,nodesize=15,nodedepth=5){
+  # input:
+  # mydata:dataframe 需处理的数据
+  # sta: 生存状态，0：删失，1：生存，2：死亡
+  # target:str 应变量
+  # feature_con: strVector 定量因变量
+  # feature_cat: strVector 定类因变量
+  # strata_var: 分层变量(只在绘制生存曲线时用)
+  # interaction: strVector 交互作用因变量
+  # cate: strVector 需要设置参考标签的定类因变量
+  # cat_ref_lev: strVector 定类因变量参考标签
+  # nomogram: str 是否生成列线图 yes no
+  # timepreinc:str  列线图以年月日哪个为单位 year month day
+  # timeprelist:   生成3条以内的生存概率线，每条代表的时间
+  #                全部折算为days时,当设置的days小于一定值时因为观测时间太短而不能出图
+  # calibrate: str 是否生成校准曲线 yes no
+  # timeroc:是否展示时间依赖ROC no yes
+  # timequant: 时间分位点
+  # savePath:str 图片保存路径
+  # round:int 小数点位数
+  # u:决定列线图和校准曲线优化参数
+  # inc:列线图risk表的间隔0.1,0.2,0.3
+  # return:
+  # results$coefs:dataframe 表格结果
+  # results$TimeROCname: strVector 分段roc
+  # results$TimeAUCname: strVector 连续roc
+  # results$survname: strVector 生存图
+  # results$nomo: strVector 列线图片路径
+  # results$conclusion: strVector 描述
+  library(MASS)
+  library(pROC)
+  library(rms)
+  library(dplyr)
+  library(survival)
+  library(survminer)
+  library(timeROC)
+  library(ggplot2)
+  library(randomForestSRC)
+  
+  results <- list() #结果
+  descrip <- "构建随机森林生存分析模型，"
+  mytime <- format(Sys.time(), "%b_%d_%H_%M_%S_%Y")  #时间
+  rand <- sample(1:100,1)
+  
+  feature1 <- c(feature_con,feature_cat)
+  if(trainsplit){
+    if (trainSet){
+      feature1 <- c(feature1,label)
+    }
+  }
+  mydata<- na.omit(mydata[,c(feature1,tim,sta)])
+  
+  # 数据预处理
+  
+  for (cat_ in feature_cat){
+    mydata[,cat_]=as.factor(mydata[,cat_])
+  }
+  mydata %<>% mutate_at(feature_cat, list(function(x) factor(x))) %>% as.data.frame()
+  # cate 需包含在feature_cat内
+  if(length(cate)>0){
+    for (i in 1:length(cate)){
+      mydata[,cate[i]] <-  relevel(mydata[,cate[i]], ref = cat_ref_lev[i])
+    }
+  }
+  print(Sys.time())
+  if(trainsplit){
+    if (trainSet){
+      mydata_train=mydata[mydata[,label]==trainLabel,]
+      mydata_test=mydata[mydata[,label]!=trainLabel,]
+    }
+    else{
+      set.seed(randomState)
+      train.rows <- sample(rownames(mydata), dim(mydata)[1]*(1-validation_ratio))
+      mydata_train <- mydata[train.rows, ]
+      
+      test.rows <- setdiff(rownames(mydata), train.rows) 
+      mydata_test <- mydata[test.rows, ]
+    }
+    data_all=list(mydata_train,mydata_test)
+  }else{
+    data_all=list(mydata)
+  }
+  print(Sys.time())
+  # 建立模型
+  formula <- paste0("Surv","(",tim,",",sta,")",'~',paste(feature1,collapse = '+'))
+  if(trainsplit){
+    #fit <- coxph(as.formula(formula), data = mydata,ties = "breslow")
+    RF_fit<-rfsrc(as.formula(formula), data = mydata_train,importance = TRUE,
+                  ntree = ntree, nodesize = nodesize,nodedepth=nodedepth,
+                  nsplit =nsplit,seed=randomState,distance='inbag',
+                  na.action="na.impute", tree.err = TRUE)
+  }else{
+    RF_fit<-rfsrc(as.formula(formula), data = mydata,importance = TRUE,
+                  ntree = ntree, nodesize = nodesize,nodedepth=nodedepth,
+                  nsplit =nsplit,seed=randomState,distance='inbag',
+                  na.action="na.impute", tree.err = TRUE)
+  }
+  
+  ###############
+  
+  print('n2++++++')
+  VIMP=data.frame(RF_fit$importance)
+  colnames(VIMP)<-'VIMP'
+  descrip<-paste0(descrip,'使用了Harrell的一致性指数（concordance index）来计算其准确度,', '模型的C-index为：',round(1-mean(RF_fit$err.rate[!is.na(RF_fit$err.rate)]),round),'，@')
+  if(trainsplit){
+    p_test<-predict.rfsrc(RF_fit, data_all[[2]])
+    test_c<-RF_fit$err.rate[!is.na(RF_fit$err.rate)]
+    descrip<-paste0(descrip,'测试集C-index为：',round(1-test_c,round),'。@')
+  }
+  for (row_ in row.names(VIMP)){
+    descrip <-paste0(descrip,row_,':重要性(VIMP)为',round(VIMP[row_,],round),'@')
+  }
+  descrip <-paste0(descrip,'(变量VIMP值小于0说明该变量降低了预测的准确性，而当VIMP值大于0则说明该变量提高了预测的准确性)。')
+  
+  # RF_fit.pred <- predict.rfsrc(RF_fit, mydata)
+  # pred.scores <- RF_fit.pred$predicted
+  # pred.scores.norm <- (pred.scores-min(pred.scores))/(max(pred.scores)-min(pred.scores))
+  #mydata[,tim]<- as.numeric(mydata[,tim])
+  #cv <- coxph(Surv(tim, sta) ~ pred.scores.norm, data = cbind(mydata, pred.scores.norm))
+  
+  # 绘制生存曲线
+  Survname <- paste0("Survgram",mytime,".png")
+  Survname1 <- paste0("Survgram",mytime,".",picFormat)
+  png(file=paste0(savePath,Survname),width=10,height=8,units="in",res=dpi)
+  plot.survival(RF_fit,cens.model="rfsrc",collapse = TRUE)
+  dev.off()
+  if ((picFormat=='svg')|(picFormat=='pdf')|(picFormat=='eps'))
+  {
+    if (picFormat=='eps'){picFormat='cairo_ps'}
+    do.call(picFormat,list(file=paste0(savePath,Survname1),width=10,height=8))
+    if (picFormat=='cairo_ps'){picFormat='eps'}
+  }
+  else
+  {
+    do.call(picFormat,list(file=paste0(savePath,Survname1),width=10,height=8,units="in",res=dpi))
+  }
+  plot.survival(RF_fit,cens.mode="km",collapse = TRUE)
+  dev.off()
+  results$Survgram <- c(Survname,Survname1)
+  # 时间依赖ROC分段
+  if(timeroc){
+    TimeROC_pig=c()
+    TimeAUC_pig=c()
+    for (i in 1:length(data_all)){
+      if(!is.null(timequant)){
+        RF_fit.pred <- predict.rfsrc(RF_fit, data_all[[i]])
+        pred.scores <- RF_fit.pred$predicted
+        pred.scores.norm <- (pred.scores-min(pred.scores))/(max(pred.scores)-min(pred.scores))
+        data_all[[i]]$lp <- pred.scores.norm
+        if(mean(timequant)<1){
+          timedep <- quantile(data_all[[i]][,tim],probs=timequant)
+        }else
+          if(mean(timequant)>1){
+            timedep <- timequant 
+          }# 下接ROC.marginal
+        ROC.marginal<-timeROC(T=data_all[[i]][,tim],
+                              marker = data_all[[i]]$lp,
+                              delta=data_all[[i]][,sta],
+                              cause=1,weighting="marginal",
+                              times= timedep,
+                              iid=TRUE)
+        TimeROCname <- paste0("TimeROC",i,'_',mytime,"_",rand,".png")
+        TimeROCname1 <- paste0("TimeROC",i,'_',mytime,"_",rand,".",picFormat)
+        png(file=paste0(savePath,TimeROCname),width=8,height=8,units="in",res=dpi)
+        plot(ROC.marginal,time=timedep[1], col= palette()[1], title= FALSE)
+        for(j in 2:length(timedep)){
+          plot(ROC.marginal,time=timedep[j],add=TRUE, col = j)
+        }
+        legend <- paste0(timedep," ",timepreinc, rep("(AUC = ", length(ROC.marginal$AUC)), round(ROC.marginal$AUC,round),' (95% CI ',
+                         paste0(round(confint(ROC.marginal,level = 0.95)$CI_AUC[,1]/100,round),'-',round(confint(ROC.marginal,level = 0.95)$CI_AUC[,2]/100,round)), rep("))", length(ROC.marginal$AUC)))
+        legend(x="bottomright",  legend = legend, col = 1:length(timedep),lty=1)
+        dev.off()
+        
+        if ((picFormat=='svg')|(picFormat=='pdf')|(picFormat=='eps'))
+        {
+          if (picFormat=='eps'){picFormat='cairo_ps'}
+          do.call(picFormat,list(file=paste0(savePath,TimeROCname1),width=8,height=8))
+          if (picFormat=='cairo_ps'){picFormat='eps'}
+        }
+        else
+        {
+          do.call(picFormat,list(file=paste0(savePath,TimeROCname1),width=8,height=8,units="in",res=dpi))
+        }
+        plot(ROC.marginal,time=timedep[1], col= palette()[1], title= FALSE)
+        for(j in 2:length(timedep)){
+          plot(ROC.marginal,time=timedep[j],add=TRUE, col = j)
+        }
+        legend <- paste0(timedep, " ",timepreinc,rep("(AUC = ", length(ROC.marginal$AUC)), round(ROC.marginal$AUC,round),' (95% CI',
+                         paste0(round(confint(ROC.marginal,level = 0.95)$CI_AUC[,1],round),'-',round(confint(ROC.marginal,level = 0.95)$CI_AUC[,2],round)), rep("))", length(ROC.marginal$AUC)))
+        legend(x="bottomright",  legend = legend, col = 1:length(timedep),lty=1)
+        dev.off()
+        
+        TimeROC_pig=c(TimeROC_pig,TimeROCname,TimeROCname1)
+        
+        # 时间依赖ROC连续
+        TimeAUCname <- paste0("TimeAUC",i,'_',mytime,"_",rand,".png")
+        TimeAUCname1 <- paste0("TimeAUC",i,'_',mytime,"_",rand,".",picFormat)
+        png(file=paste0(savePath,TimeAUCname),width=5,height=5,units="in",res=dpi)
+        plotAUCcurve(ROC.marginal,conf.int=TRUE,conf.band=TRUE)
+        dev.off()
+        
+        if ((picFormat=='svg')|(picFormat=='pdf')|(picFormat=='eps'))
+        {
+          if (picFormat=='eps'){picFormat='cairo_ps'}
+          do.call(picFormat,list(file=paste0(savePath,TimeAUCname1),width=5,height=5))
+          if (picFormat=='cairo_ps'){picFormat='eps'}
+        }
+        else
+        {
+          do.call(picFormat,list(file=paste0(savePath,TimeAUCname1),width=5,height=5,units="in",res=dpi))
+        }
+        plotAUCcurve(ROC.marginal,conf.int=TRUE,conf.band=TRUE)
+        dev.off()
+        
+        TimeAUC_pig=c(TimeAUC_pig,TimeAUCname,TimeAUCname1)
+      }
+    }
+    if(!is.null(timequant)){
+      if(trainsplit){
+        results$TimeROCname_train=TimeROC_pig[1:2]
+        results$TimeAUCname_train=TimeAUC_pig[1:2]
+        results$TimeROCname_test=TimeROC_pig[3:4]
+        results$TimeAUCname_test=TimeAUC_pig[3:4]
+      }else{
+        results$TimeROCname_train=TimeROC_pig
+        results$TimeAUCname_train=TimeAUC_pig
+      }
+    }
+  }
+  results$descrip <- descrip
+  return(results)
+}

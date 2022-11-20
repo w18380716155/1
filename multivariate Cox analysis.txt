@@ -1,0 +1,13 @@
+library(survival)
+library(survminer)
+setwd("D\\")   
+rt=read.table("A.txt",header=T,sep="\t",check.names=F,row.names=1)
+  multiCox <- coxph(Surv(futime, fustat) ~ ., data = train)
+	  multiCox=step(multiCox,direction = "both")
+	  multiCoxSum=summary(multiCox)
+		 write.table(outMultiTab,file="07.multiCox.xls",sep="\t",row.names=F,quote=F)
+			   write.table(testRiskOut,file="Test.txt",sep="\t",quote=F,row.names=F)
+			   write.table(trainRiskOut,file="Train.txt",sep="\t",quote=F,row.names=F)
+			   break
+		}
+}

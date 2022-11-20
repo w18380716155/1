@@ -1,0 +1,33 @@
+library(survminer) 
+library(survival) 
+library(rms)
+
+setwd("C:\\Users")
+OS=read.table("nomogram.txt",header=T,sep="\t",check.names=F) 
+
+OS$stage_M<-factor(OS$stage_M,labels=c("M0","M1"))
+OS$stage_N<-factor(OS$stage_N,labels=c("N1","N2/N3"))
+OS$stage_T<-factor(OS$stage_T,labels=c("T1/T2","T3/T4"))
+OS$gender<-factor(OS$gender,labels=c("male","female"))
+
+ddist <-datadist(OS)
+options(datadist = ddist)
+
+f<-cph(Surv(futime,fustat) ~ age +gender+stage_N+stage_T++stage_M+riskscore, x = TRUE,y = TRUE,surv = TRUE,
+       data = OS)
+
+survival <- Survival(f)
+survival1 <- function(x) survival(1,x)
+survival2 <- function(x) survival(3,x)
+nom_sur<-nomogram(f,fun = list(survival1,survival2),
+               fun.at =c(0.1,seq(0.1,0.9,by = 0.15),0.9),
+               funlabel = c("1 year","3 years"))
+
+pdf("nom.pdf")
+plot(nom_sur,xfrac=0.3)
+dev.off()
+
+coxpe <- predict(f)
+c_index=1-rcorr.cens(coxpe,Surv(OS$futime,OS$fustat))
+c_index
+
