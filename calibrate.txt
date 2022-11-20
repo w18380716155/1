@@ -1,0 +1,116 @@
+
+rm(list = ls())
+
+library(pacman)
+p_load(survival, rms, tidyverse,plyr)
+
+projectPath = "C:\\Users"
+NomoPath = paste(projectPath, "Nomo", sep = "\\")
+if(!dir.exists(NomoPath)) dir.create(NomoPath) 
+dataPath = paste(projectPath, "Data", sep = "\\")
+setwd(projectPath)
+
+
+data_for_table <- read.table("data_for_norm.csv",header = T,sep = ",",row.names = NULL,check.names = F)
+
+str(data_for_table)
+
+
+
+dfn = datadist(data_for_table)
+options(datadist = "dfn")
+
+baSurv <- Surv(data_for_table$futime,data_for_table$fustat)
+data_for_table$baSurv <- with(data_for_table,baSurv)
+
+f<-cph(Surv(futime,fustat) ~ age +gender+stage_N+stage_T++stage_M+riskscore, x = TRUE,y = TRUE,surv = TRUE,
+       data = OS)
+
+survival <- Survival(f)
+survival1 <- function(x) survival(365,x)
+survival2 <- function(x) survival(1095,x)
+
+setwd(NomoPath)
+
+png(file = "OS_Nomo.png", width = 1500, height = 900, units = 'px', res = NA)
+nom <- nomogram(f,fun=list(survival1,survival2),fun.at = c(0.05,seq(0.1,0.9,by=0.2),0.95),funlabel = c('1 year survival','3 year survival'))
+plot(nom)
+# Save the file.
+dev.off()
+#获取c-index值
+f2 <- coxph(Surv(futime,fustat)~ ~  age +gender+stage_N+stage_T+stage_M+stage_TNM+riskscore, surv=T,x=T, y=T,time.inc=time,data =OS))
+sum.surv <- summary(f2)
+c_index <- sum.surv$concordance
+c_index
+
+cal <- calibrate(f,cmethod='KM',method = 'boot',u=365,m=ceiling(nrow(data_for_table)/4),b=nrow(data_for_table))
+#plot(cal,lwd=2,lty=1,errbar.col=c(rgb(0,118,192,maxColorValue = 255)),xlim=c(0.8,1),ylim=c(0,1),xlab='1 year os',ylab='actual 1 year os',col=c(rgb(192,98,83,maxColorValue = 255)))
+colors = c("#69AC40", "#0095B0", "#9D1535")
+png(file = "1_year_OS_calibrate.png",width=600,height=600)
+par(mar = c(3.2, 3.2, 1, 0.4), mgp = c(1.8, 0.5, 0)) 
+plot(cal, lwd = 2, lty = 1, xlim = c(0.8,1.1), ylim= c(0.8,1.1),
+     col=c(rgb(0,118,192,maxColorValue = 255)),
+     #errbar.col = c("#00468BFF"),
+     errbar = F, # 如果是绘制多条曲线，则不绘制errbar
+     xlab = "Nomogram predicted survival probability",
+     ylab = "Actual survival probability",
+     riskdist = F, # 去除顶部的竖线
+     subtitles = F, # 去除左下和右下的副标题)
+     par.corrected = list(col = "white")) # 不画X(overfitting-corrected estimates)
+lines(cal[,c('mean.predicted',"KM")], 
+      type = 'b',
+      lwd = 2, col = c(rgb(192,98,83,maxColorValue = 255)), pch = 16)
+abline(0, 1, lty = 3, lwd = 2, col = c("#224444"))
+times = c(1,2)
+legend("bottomright", paste0('1', "-Year Survival"), col = c(rgb(192,98,83,maxColorValue = 255)), adj = 0, cex = 1.0, lwd = 2, bty = "n", pch = 16)
+# 横坐标为列线图预测的患者的time年生存概率，纵坐标为每个患者实际的time年生存概率，线条与对角线的重合度反映了模型预测的准确性。
+dev.off()
+
+#画矫正曲线
+cal <- calibrate(f,cmethod='KM',method = 'boot',u=365*3,m=ceiling(nrow(data_for_table)/4),b=nrow(data_for_table))
+#plot(cal,lwd=2,lty=1,errbar.col=c(rgb(0,118,192,maxColorValue = 255)),xlim=c(0.8,1),ylim=c(0,1),xlab='1 year os',ylab='actual 1 year os',col=c(rgb(192,98,83,maxColorValue = 255)))
+colors = c("#69AC40", "#0095B0", "#9D1535")
+png(file = "3_year_OS_calibrate.png",width=600,height=600)
+par(mar = c(3.2, 3.2, 1, 0.4), mgp = c(1.8, 0.5, 0)) 
+plot(cal, lwd = 2, lty = 1, xlim = c(0.7,1.1), ylim= c(0.7,1.1),
+     col=c(rgb(0,118,192,maxColorValue = 255)),
+     #errbar.col = c("#00468BFF"),
+     errbar = F, # 如果是绘制多条曲线，则不绘制errbar
+     xlab = "Nomogram predicted survival probability",
+     ylab = "Actual survival probability",
+     riskdist = F, # 去除顶部的竖线
+     subtitles = F, # 去除左下和右下的副标题)
+     par.corrected = list(col = "white")) # 不画X(overfitting-corrected estimates)
+lines(cal[,c('mean.predicted',"KM")], 
+      type = 'b',
+      lwd = 2, col = c(rgb(192,98,83,maxColorValue = 255)), pch = 16)
+abline(0, 1, lty = 3, lwd = 2, col = c("#224444"))
+times = c(1,2)
+legend("bottomright", paste0('3', "-Year Survival"), col = c(rgb(192,98,83,maxColorValue = 255)), adj = 0, cex = 1.0, lwd = 2, bty = "n", pch = 16)
+# 横坐标为列线图预测的患者的time年生存概率，纵坐标为每个患者实际的time年生存概率，线条与对角线的重合度反映了模型预测的准确性。
+dev.off()
+
+#画矫正曲线
+cal <- calibrate(f,cmethod='KM',method = 'boot',u=365*5,m=ceiling(nrow(data_for_table)/4),b=nrow(data_for_table))
+#plot(cal,lwd=2,lty=1,errbar.col=c(rgb(0,118,192,maxColorValue = 255)),xlim=c(0.8,1),ylim=c(0,1),xlab='1 year os',ylab='actual 1 year os',col=c(rgb(192,98,83,maxColorValue = 255)))
+colors = c("#69AC40", "#0095B0", "#9D1535")
+png(file = "5_year_OS_calibrate.png",width=600,height=600)
+par(mar = c(3.2, 3.2, 1, 0.4), mgp = c(1.8, 0.5, 0)) 
+plot(cal, lwd = 2, lty = 1, xlim = c(0.6,1.1), ylim= c(0.6,1.1),
+     col=c(rgb(0,118,192,maxColorValue = 255)),
+     #errbar.col = c("#00468BFF"),
+     errbar = F, # 如果是绘制多条曲线，则不绘制errbar
+     xlab = "Nomogram predicted survival probability",
+     ylab = "Actual survival probability",
+     riskdist = F, # 去除顶部的竖线
+     subtitles = F, # 去除左下和右下的副标题)
+     par.corrected = list(col = "white")) # 不画X(overfitting-corrected estimates)
+lines(cal[,c('mean.predicted',"KM")], 
+      type = 'b',
+      lwd = 2, col = c(rgb(192,98,83,maxColorValue = 255)), pch = 16)
+abline(0, 1, lty = 3, lwd = 2, col = c("#224444"))
+times = c(1,2)
+legend("bottomright", paste0('5', "-Year Survival"), col = c(rgb(192,98,83,maxColorValue = 255)), adj = 0, cex = 1.0, lwd = 2, bty = "n", pch = 16)
+# 横坐标为列线图预测的患者的time年生存概率，纵坐标为每个患者实际的time年生存概率，线条与对角线的重合度反映了模型预测的准确性。
+dev.off()
+
